@@ -1,47 +1,41 @@
 package hex.genmodel.tools;
 
+import com.mxgraph.layout.mxCompactTreeLayout;
+import com.mxgraph.layout.mxIGraphLayout;
+import com.mxgraph.util.mxCellRenderer;
 import hex.genmodel.GenModel;
 import hex.genmodel.MojoModel;
 import hex.genmodel.algos.tree.SharedTreeGraph;
 import hex.genmodel.algos.tree.SharedTreeGraphConverter;
 
-import org.graphstream.graph.ElementNotFoundException;
-import org.graphstream.graph.Graph;
-import org.graphstream.graph.implementations.MultiGraph;
-import org.graphstream.stream.GraphParseException;
-import org.graphstream.stream.file.FileSinkImages;
+import org.jgrapht.ext.JGraphXAdapter;
+import org.jgrapht.graph.*;
 
+import org.jgrapht.io.*;
+import javax.imageio.ImageIO;
+import java.awt.*;
+import java.awt.image.BufferedImage;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-
+import java.util.Map;
 
 /**
  * Print dot (graphviz) representation of one or more trees in a DRF or GBM model.
  */
 public class PrintMojo {
   private GenModel genModel;
-  private static boolean printRaw = false;
-  private static int treeToPrint = -1;
+  private boolean printRaw = false;
+  private int treeToPrint = -1;
   private static int maxLevelsToPrintPerEdge = 10;
-  private static boolean detail = false;
-  private static String outputFileName = null;
-  private static String optionalTitle = null;
-  private static PrintTreeOptions pTreeOptions;
-  private static boolean internal;
-  private String outputPngName = null;
-  private static final String tmpOutputFileName = "tmpOutputFileName.dot";
-  private static final String stylesheet = "" +
-          "node {" +
-          "   text-background-mode: rounded-box;" +
-          "   text-background-color: gray; " +
-          "   text-color: #222;" +
-          "}" +
-          "node.plus {" +
-          "   text-background-color: #F33; " +
-          "   text-color: #DDD;" +
-          "}";
+  private boolean detail = false;
+  private String outputFileName = null;
+  private String optionalTitle = null;
+  private PrintTreeOptions pTreeOptions;
+  private boolean internal;
+  private String outputFormat = "dot";
+  private static final String tmpOutputFileName = "tmpOutputFileName.gv";
 
   public static void main(String[] args) {
     // Parse command line arguments
@@ -82,7 +76,7 @@ public class PrintMojo {
     System.out.println("");
     System.out.println("    --input | -i    Input mojo file.");
     System.out.println("");
-    System.out.println("    --output | -o   Output dot filename.");
+    System.out.println("    --output | -o   Output dot/png filename.");
     System.out.println("                    [default stdout]");
     System.out.println("    --decimalplaces | -d    Set decimal places of all numerical values.");
     System.out.println("");
@@ -90,7 +84,8 @@ public class PrintMojo {
     System.out.println("");
     System.out.println("    --internal    Internal H2O representation of the decision tree (splits etc.) is used for generating the GRAPHVIZ format.");
     System.out.println("");
-    System.out.println("    --direct    Produce directly an image of the Tree instead of the dot-format.");
+    System.out.println("    --format    Specify output format of the decision tree representation (dot or png) ");
+    System.out.println("                    [default dot]");
     System.out.println("");
     System.out.println("");
     System.out.println("Example:");
@@ -170,10 +165,14 @@ public class PrintMojo {
             nPlaces = Integer.parseInt(s);
             break;
 
-          case "--direct":
+          case "--format":
             i++;
             if (i >= args.length) usage();
-            outputPngName = args[i];
+            outputFormat = args[i];
+            if(!(outputFormat.equalsIgnoreCase("png") || outputFormat.equalsIgnoreCase("dot"))) {
+              System.out.println("ERROR: Unsupported format");
+              usage();
+            }
             break;
             
           case "--raw":
@@ -208,38 +207,44 @@ public class PrintMojo {
       System.out.println("ERROR: Must specify -i");
       usage();
     }
+    if (outputFileName != null && 
+            (("png".equalsIgnoreCase(outputFormat) && !outputFileName.toUpperCase().endsWith("PNG")) || 
+            ("dot".equalsIgnoreCase(outputFormat) && !(outputFileName.toUpperCase().endsWith("DOT") || outputFileName.toUpperCase().endsWith("GV"))))) {
+      System.out.println("ERROR: Output file name \"" + outputFileName + "\"  has invalid file extension. Fix extension or use different output format than \"" + outputFormat + "\".");
+      usage();
+    }
   }
 
   private void run() throws Exception {
     validateArgs();
-    if (outputFileName != null) {
-      handlePrintingToOutputFile();
-    } else if (outputPngName != null) {
-      handlePrintingToTmpFile();
+    if ("png".equalsIgnoreCase(outputFormat)) {
+      handlePrintingDotToTmpFile();
+    } else if (outputFileName != null) {
+      handlePrintingDotToOutputFile();
     } else {
-      handlePrintingToConsole();
+      HandlePrintingDotToConsole();
     }
   }
   
-  private void handlePrintingToOutputFile() throws IOException, GraphParseException, ElementNotFoundException {
+  private void handlePrintingDotToOutputFile() throws IOException, ImportException {
     Path dotSourceFilePath = Paths.get(outputFileName);
-    try (PrintStream os = new PrintStream(new FileOutputStream(dotSourceFilePath.toFile()))) {
+    try (FileOutputStream fos = new FileOutputStream(dotSourceFilePath.toFile()); PrintStream os = new PrintStream(fos)) {
       generateDotFromSource(os, dotSourceFilePath);
     }
   }
 
-  private void handlePrintingToTmpFile() throws IOException, GraphParseException, ElementNotFoundException {
+  private void handlePrintingDotToTmpFile() throws IOException, ImportException {
     Path dotSourceFilePath = Files.createTempFile("", tmpOutputFileName);
-    try (PrintStream os = new PrintStream(new FileOutputStream(dotSourceFilePath.toFile()))) {
+    try (FileOutputStream fos = new FileOutputStream(dotSourceFilePath.toFile()); PrintStream os = new PrintStream(fos)) {
       generateDotFromSource(os, dotSourceFilePath);
     }
   }
 
-  private void handlePrintingToConsole() throws IOException, GraphParseException, ElementNotFoundException {
+  private void HandlePrintingDotToConsole() throws IOException, ImportException {
     generateDotFromSource(System.out, null);
   }
 
-  private void generateDotFromSource(PrintStream os, Path dotSourceFilePath) throws IOException, GraphParseException, ElementNotFoundException {
+  private void generateDotFromSource(PrintStream os, Path dotSourceFilePath) throws IOException, ImportException {
     if (!(genModel instanceof SharedTreeGraphConverter)) {
       System.out.println("ERROR: Unknown MOJO type");
       System.exit(1);
@@ -249,25 +254,33 @@ public class PrintMojo {
     if (printRaw) {
       g.print();
     }
-    g.printDot(os, maxLevelsToPrintPerEdge, detail, optionalTitle, pTreeOptions, true);
-    if (outputPngName != null) {
-        Graph graph = new MultiGraph(outputPngName) ;
-        graph.read(dotSourceFilePath.toString());
-        saveGraph(graph);
+    g.printDot(os, maxLevelsToPrintPerEdge, detail, optionalTitle, pTreeOptions);
+    if (outputFormat.toUpperCase().equals("PNG")) {
+      generateOutputPng(dotSourceFilePath);
+    }
+  }
+  
+  private void generateOutputPng(Path dotSourceFilePath) throws ImportException, IOException {
+    LabeledVertexProvider vertexProvider = new LabeledVertexProvider();
+    LabeledEdgesProvider edgesProvider = new LabeledEdgesProvider();
+    ComponentUpdater componentUpdater = new ComponentUpdater();
+    DOTImporter<String, LabeledEdge> importer = new DOTImporter<>(vertexProvider, edgesProvider, componentUpdater);
+    DirectedMultigraph<String, LabeledEdge> result = new DirectedMultigraph<>(LabeledEdge.class);
+    try ( FileInputStream is = new FileInputStream(dotSourceFilePath.toFile())) {
+      importer.importGraph(result, new InputStreamReader(is));
+      JGraphXAdapter<String, LabeledEdge> graphAdapter = new JGraphXAdapter<String, LabeledEdge>(result);
+      mxIGraphLayout layout = new mxCompactTreeLayout(graphAdapter, false);
+      layout.execute(graphAdapter.getDefaultParent());
+      BufferedImage image = mxCellRenderer.createBufferedImage(graphAdapter, null, 2, Color.WHITE, true, null);
+      if (outputFileName != null) {
+        ImageIO.write(image, "PNG", new File(outputFileName));
+      } else {
+        ImageIO.write(image, "PNG", System.out);
+      }
     }
   }
 
-  public void saveGraph(Graph graph) throws IOException {
-    final FileSinkImages fsi = new FileSinkImages();
-    fsi.setLayoutPolicy(FileSinkImages.LayoutPolicy.COMPUTED_FULLY_AT_NEW_IMAGE);
-    fsi.setQuality(FileSinkImages.Quality.HIGH);
-    fsi.setResolution(FileSinkImages.Resolutions.HD1080);
-    fsi.setRenderer(FileSinkImages.RendererType.SCALA);
-    fsi.setStyleSheet(stylesheet);
-    fsi.writeAll(graph, outputPngName);
-  }
-
-  public static class PrintTreeOptions {
+  public class PrintTreeOptions {
     public boolean _setDecimalPlace = false;
     public int _nPlaces = -1;
     public int _fontSize = 14;  // default
@@ -287,4 +300,56 @@ public class PrintMojo {
       return (float) (Math.round(value*sc)/sc);
     }
   }
+
+  private class LabeledVertexProvider implements VertexProvider<String> {
+    @Override
+    public String buildVertex(String id, Map<String, Attribute> attributes) {
+      return attributes.get("label").toString();
+    }
+  }
+  
+  private class LabeledEdgesProvider implements EdgeProvider<String,LabeledEdge>{
+
+    @Override
+    public LabeledEdge buildEdge(String f, String t, String l, Map<String, Attribute> attrs) {
+      return new LabeledEdge(l);
+    }
+  }
+  private class ComponentUpdater implements org.jgrapht.io.ComponentUpdater<String>{
+      @Override
+    public void update(String v, Map<String, Attribute> attrs) {
+    }
+  }
+  
+  private class LabeledEdge extends DefaultEdge {
+    private String label;
+
+    /**
+     * Constructs a relationship edge
+     *
+     * @param label the label of the new edge.
+     *
+     */
+    public LabeledEdge(String label)
+    {
+      this.label = label;
+    }
+
+    /**
+     * Gets the label associated with this edge.
+     *
+     * @return edge label
+     */
+    public String getLabel()
+    {
+      return label;
+    }
+
+    @Override
+    public String toString()
+    {
+      return label;
+    }
+  }
+
 }

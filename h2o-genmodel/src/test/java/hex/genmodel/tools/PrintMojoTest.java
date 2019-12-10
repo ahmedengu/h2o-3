@@ -1,16 +1,11 @@
-package hex.genmodel;
+package hex.genmodel.tools;
 
-import hex.genmodel.tools.PrintMojo;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-
 import java.io.*;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.*;
 import java.security.Permission;
 
 import static org.junit.Assert.*;
@@ -18,15 +13,15 @@ import static org.junit.Assert.*;
 public class PrintMojoTest {
 
     private Path gbmMojoFile;
-    private Path targetFile;
     private String outputPngFilename;
+    private String outputDotFilename;
     private SecurityManager originalSecurityManager;
     
     @Before
     public void setup() throws IOException {
         gbmMojoFile = copyMojoFileResource("mojo.zip");
-        targetFile = Files.createTempFile("", "test_h2o.dot");
         outputPngFilename = "exampleh2o.png";
+        outputDotFilename = "exampleh2o.gv";
         originalSecurityManager = System.getSecurityManager();
         System.setSecurityManager(new PreventExitSecurityManager());
     }
@@ -35,18 +30,34 @@ public class PrintMojoTest {
     public void tearDown() throws Exception {
         System.setSecurityManager(originalSecurityManager);
         Files.deleteIfExists(gbmMojoFile);
-        Files.deleteIfExists(targetFile);
     }
 
     @Test
-    public void testPrintMojoNone() throws IOException {
-        String[] none = {
+    public void testPrintMojoDotToConsole() throws IOException {
+        String[] dotToConsole = {
                 "--tree", "0",
                 "-i", gbmMojoFile.toAbsolutePath().toString(),
                 "-f", "20", "-d", "3"
         };
         try {
-            PrintMojo.main(none);
+            PrintMojo.main(dotToConsole);
+        } catch (PreventedExitException e) {
+            assertEquals(0, e.status); // PrintMojo is expected to finish without errors
+        }
+        Path pathToImage = Paths.get(outputDotFilename);
+        Assert.assertFalse(Files.deleteIfExists(pathToImage));
+    }
+
+    @Test
+    public void testPrintMojoPngToConsole() throws IOException {
+        String[] pngToConsole = {
+                "--tree", "0",
+                "-i", gbmMojoFile.toAbsolutePath().toString(),
+                "--format", "png",
+                "-f", "20", "-d", "3"
+        };
+        try {
+            PrintMojo.main(pngToConsole);
         } catch (PreventedExitException e) {
             assertEquals(0, e.status); // PrintMojo is expected to finish without errors
         }
@@ -55,56 +66,38 @@ public class PrintMojoTest {
     }
 
     @Test
-    public void testPrintMojoDirectOnly() throws IOException {
-        String[] directOnly = {
+    public void testPrintMojoDotToFile() throws IOException {
+        String[] dotToFile = {
                 "--tree", "0",
                 "-i", gbmMojoFile.toAbsolutePath().toString(),
-                "-f", "20", "-d", "3", "--direct", outputPngFilename
+                "-f", "20", "-d", "3",
+                "-o", outputDotFilename
         };
         try {
-            PrintMojo.main(directOnly);
-            fail("Expected PrintMojo to exit");
+            PrintMojo.main(dotToFile);
+        } catch (PreventedExitException e) {
+            assertEquals(0, e.status); // PrintMojo is expected to finish without errors
+        }
+        Path pathToImage = Paths.get(outputDotFilename);
+        Assert.assertTrue(Files.deleteIfExists(pathToImage));
+    }
+
+    @Test
+    public void testPrintMojoPngToFile() throws IOException {
+        String[] pngToFile = {
+                "--tree", "0",
+                "-i", gbmMojoFile.toAbsolutePath().toString(),
+                "-f", "20", "-d", "3",
+                "-o", outputPngFilename,
+                "--format", "png"
+        };
+        try {
+            PrintMojo.main(pngToFile);
         } catch (PreventedExitException e) {
             assertEquals(0, e.status); // PrintMojo is expected to finish without errors
         }
         Path pathToImage = Paths.get(outputPngFilename);
         Assert.assertTrue(Files.deleteIfExists(pathToImage));
-    }
-
-    @Test
-    public void testPrintMojoBoth() throws IOException {
-        String[] both = {
-                "--tree", "0",
-                "-i", gbmMojoFile.toAbsolutePath().toString(),
-                "-o", targetFile.toAbsolutePath().toString(),
-                "-f", "20", "-d", "3", "--direct", outputPngFilename
-        };
-        try {
-            PrintMojo.main(both);
-            fail("Expected PrintMojo to exit");
-        } catch (PreventedExitException e) {
-            assertEquals(0, e.status); // PrintMojo is expected to finish without errors
-        }
-
-        Path pathToImage = Paths.get(outputPngFilename);
-        Assert.assertTrue(Files.deleteIfExists(pathToImage));
-    }
-
-    @Test
-    public void testPrintMojoOutputOnly() throws IOException {
-        String[] outputOnly = {
-                "--tree", "0",
-                "-i", gbmMojoFile.toAbsolutePath().toString(),
-                "-o", targetFile.toAbsolutePath().toString(),
-                "-f", "20", "-d", "3"
-        };
-        try {
-            PrintMojo.main(outputOnly);
-        } catch (PreventedExitException e) {
-            assertEquals(0, e.status); // PrintMojo is expected to finish without errors
-        }
-        Path pathToImage = Paths.get(outputPngFilename);
-        Assert.assertFalse(Files.deleteIfExists(pathToImage));
     }
 
     private Path copyMojoFileResource(String name) throws IOException {
